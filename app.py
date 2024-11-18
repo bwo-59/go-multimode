@@ -2,7 +2,8 @@ import pandas as pd
 from geopy.distance import geodesic
 import streamlit as st
 from io import BytesIO
-import pydeck as pdk
+import folium
+from streamlit_folium import st_folium
 
 # Set page configuration
 st.set_page_config(
@@ -23,40 +24,27 @@ except FileNotFoundError:
     st.error("The 'ports.csv' file was not found in the project directory.")
     st.stop()
 
-# Display 10 random ports on a map
+# Display 10 random ports on a map using Folium
 st.header("Port Locations")
 random_ports_df = ports_df.sample(n=10)
 
-# Prepare data for mapping
-port_locations = random_ports_df[['Latitude', 'Longitude', 'Port Name']]
+# Create a Folium map centered on the average coordinates of the ports
+average_lat = random_ports_df['Latitude'].mean()
+average_lon = random_ports_df['Longitude'].mean()
 
-# Create a Pydeck map
-map_layer = pdk.Deck(
-    map_style='mapbox://styles/mapbox/light-v9',
-    initial_view_state=pdk.ViewState(
-        latitude=port_locations['Latitude'].mean(),
-        longitude=port_locations['Longitude'].mean(),
-        zoom=1,
-        pitch=0,
-    ),
-    layers=[
-        pdk.Layer(
-            'ScatterplotLayer',
-            data=port_locations,
-            get_position='[Longitude, Latitude]',
-            get_fill_color='[200, 30, 0, 160]',
-            get_radius=50000,
-            pickable=True,
-            auto_highlight=True,
-        )
-    ],
-    tooltip={
-        'html': '<b>Port Name:</b> {Port Name}',
-        'style': {'color': 'white'}
-    }
-)
+port_map = folium.Map(location=[average_lat, average_lon], zoom_start=2)
 
-st.pydeck_chart(map_layer)
+# Add port markers to the map
+for index, row in random_ports_df.iterrows():
+    folium.Marker(
+        location=[row['Latitude'], row['Longitude']],
+        popup=row['Port Name'],
+        tooltip=row['Port Name'],
+        icon=folium.Icon(color='blue', icon='ship', prefix='fa')
+    ).add_to(port_map)
+
+# Display the map in Streamlit
+st_data = st_folium(port_map, width=700, height=450)
 
 # Shipment File Upload
 st.header("Upload Shipment Excel File")
