@@ -2,4 +2,5 @@ streamlit
 pandas
 geopy
 openpyxl
-pydeck
+folium
+streamlit-folium
