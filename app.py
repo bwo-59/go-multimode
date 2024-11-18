@@ -3,8 +3,8 @@ from geopy.distance import geodesic
 import streamlit as st
 from io import BytesIO
 import folium
-from folium import plugins
 from streamlit_folium import st_folium
+from pyproj import Geod  # Import pyproj for geodesic calculations
 
 # Set page configuration
 st.set_page_config(
@@ -234,6 +234,16 @@ if ports_df is not None:
                                     avg_lat = selected_shipment[['Origin Latitude', 'Destination Latitude']].mean().mean()
                                     avg_lon = selected_shipment[['Origin Longitude', 'Destination Longitude']].mean().mean()
                                     shipment_map = folium.Map(location=[avg_lat, avg_lon], zoom_start=4)
+                                    geod = Geod(ellps="WGS84")  # Initialize Geod
+
+                                    # Function to get geodesic line
+                                    def get_geodesic_line(lat1, lon1, lat2, lon2, n_points=30):
+                                        lons, lats = geod.npts(lon1, lat1, lon2, lat2, n_points)
+                                        # Add start and end points
+                                        lats = [lat1] + lats + [lat2]
+                                        lons = [lon1] + lons + [lon2]
+                                        return list(zip(lats, lons))
+
                                     # Add markers and curved lines for each leg
                                     for _, leg in selected_shipment.iterrows():
                                         origin = (leg['Origin Latitude'], leg['Origin Longitude'])
@@ -244,9 +254,11 @@ if ports_df is not None:
                                             color = 'darkblue'
                                         else:  # ROAD
                                             color = 'saddlebrown'
-                                        # Add curved line
-                                        plugins.CurvedLine(
-                                            locations=[origin, destination],
+                                        # Generate geodesic line
+                                        line = get_geodesic_line(origin[0], origin[1], destination[0], destination[1])
+                                        # Add line
+                                        folium.PolyLine(
+                                            line,
                                             color=color,
                                             weight=5,
                                             opacity=0.8,
