@@ -4,7 +4,7 @@ import streamlit as st
 from io import BytesIO
 import folium
 from streamlit_folium import st_folium
-from pyproj import Geod  # Import pyproj for geodesic calculations
+from pyproj import Geod
 
 # Set page configuration
 st.set_page_config(
@@ -90,6 +90,10 @@ if ports_df is not None:
     port_map = create_port_map(ports_df)
     st_folium(port_map, width=700, height=450)
 
+    # Initialize session state for enriched shipments
+    if 'enriched_shipments_df' not in st.session_state:
+        st.session_state['enriched_shipments_df'] = None
+
     # Process the shipment file if uploaded
     if shipment_file is not None:
         st.header("Shipment Data Processing")
@@ -115,179 +119,186 @@ if ports_df is not None:
                     st.warning("No valid shipment data found after cleaning. Please check your file.")
                 else:
                     # Process Shipments
-                    if st.button("Process Shipments"):
-                        with st.spinner('Processing your shipments...'):
-                            enriched_shipments = []
+                    process_shipments = st.button("Process Shipments")
+                    if process_shipments or st.session_state['enriched_shipments_df'] is not None:
+                        if process_shipments:
+                            with st.spinner('Processing your shipments...'):
+                                enriched_shipments = []
 
-                            def select_nearest_port(location_coords):
-                                # Calculate distance from location to each port
-                                ports_df['Distance'] = ports_df.apply(
-                                    lambda row: geodesic(location_coords, (row['Latitude'], row['Longitude'])).km,
-                                    axis=1
-                                )
-                                # Filter ports within the radius
-                                nearby_ports = ports_df[ports_df['Distance'] <= radius_km].copy()
-                                if nearby_ports.empty:
-                                    return None
-                                # Select the port with the minimum distance
-                                nearest_port = nearby_ports.loc[nearby_ports['Distance'].idxmin()]
-                                return nearest_port
-
-                            for _, shipment in shipments_df.iterrows():
-                                consignment_id = shipment['Consignment ID']
-                                customer_name = shipment['Customer Name']
-                                load_tons = shipment['Load (Tons)']
-                                vehicle_type = shipment['Vehicle Type']
-                                date = shipment['Date']
-
-                                # Origin and destination coordinates
-                                origin_coords = (shipment['Origin Latitude'], shipment['Origin Longitude'])
-                                destination_coords = (shipment['Destination Latitude'], shipment['Destination Longitude'])
-
-                                # Select nearest ports near origin and destination
-                                origin_port = select_nearest_port(origin_coords)
-                                destination_port = select_nearest_port(destination_coords)
-
-                                if origin_port is None or destination_port is None:
-                                    st.warning(f"No suitable ports found within {radius_km} km for shipment {consignment_id}. Skipping.")
-                                    continue
-
-                                # Create legs
-                                legs = [
-                                    {
-                                        'ID': consignment_id,
-                                        'Sequence': 1,
-                                        'Origin': shipment['Origin'],
-                                        'Destination': origin_port['Port Name'],
-                                        'Origin Latitude': shipment['Origin Latitude'],
-                                        'Origin Longitude': shipment['Origin Longitude'],
-                                        'Destination Latitude': origin_port['Latitude'],
-                                        'Destination Longitude': origin_port['Longitude'],
-                                        'Load (Tons)': load_tons,
-                                        'Mode': 'ROAD',
-                                        'Vehicle Type': vehicle_type,
-                                        'Customer Name': customer_name,
-                                        'Date': date
-                                    },
-                                    {
-                                        'ID': consignment_id,
-                                        'Sequence': 2,
-                                        'Origin': origin_port['Port Name'],
-                                        'Destination': destination_port['Port Name'],
-                                        'Origin Latitude': origin_port['Latitude'],
-                                        'Origin Longitude': origin_port['Longitude'],
-                                        'Destination Latitude': destination_port['Latitude'],
-                                        'Destination Longitude': destination_port['Longitude'],
-                                        'Load (Tons)': load_tons,
-                                        'Mode': 'SEA',
-                                        'Vehicle Type': None,
-                                        'Customer Name': customer_name,
-                                        'Date': date
-                                    },
-                                    {
-                                        'ID': consignment_id,
-                                        'Sequence': 3,
-                                        'Origin': destination_port['Port Name'],
-                                        'Destination': shipment['Destination'],
-                                        'Origin Latitude': destination_port['Latitude'],
-                                        'Origin Longitude': destination_port['Longitude'],
-                                        'Destination Latitude': shipment['Destination Latitude'],
-                                        'Destination Longitude': shipment['Destination Longitude'],
-                                        'Load (Tons)': load_tons,
-                                        'Mode': 'ROAD',
-                                        'Vehicle Type': vehicle_type,
-                                        'Customer Name': customer_name,
-                                        'Date': date
-                                    }
-                                ]
-                                enriched_shipments.extend(legs)
-
-                            if enriched_shipments:
-                                enriched_shipments_df = pd.DataFrame(enriched_shipments)
-                                st.success("Shipments processed successfully!")
-                                st.subheader("Enriched Shipment Data")
-                                st.dataframe(enriched_shipments_df)
-
-                                # Download button
-                                def convert_df(df):
-                                    output = BytesIO()
-                                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                                        df.to_excel(writer, index=False, sheet_name='Enriched Shipments')
-                                    processed_data = output.getvalue()
-                                    return processed_data
-
-                                excel_data = convert_df(enriched_shipments_df)
-                                st.download_button(
-                                    label="Download Enriched Data as Excel",
-                                    data=excel_data,
-                                    file_name='enriched_shipments.xlsx',
-                                    mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                                )
-
-                                # Visualization Section
-                                st.subheader("Visualize Shipment Route")
-                                shipment_ids = enriched_shipments_df['ID'].unique()
-                                selected_id = st.selectbox("Select a Shipment ID to visualize:", shipment_ids)
-                                if selected_id:
-                                    selected_shipment = enriched_shipments_df[enriched_shipments_df['ID'] == selected_id]
-                                    # Create a map centered at the average location of the shipment legs
-                                    avg_lat = selected_shipment[['Origin Latitude', 'Destination Latitude']].mean().mean()
-                                    avg_lon = selected_shipment[['Origin Longitude', 'Destination Longitude']].mean().mean()
-                                    shipment_map = folium.Map(location=[avg_lat, avg_lon], zoom_start=4)
-                                    geod = Geod(ellps="WGS84")  # Initialize Geod
-
-                                    # Function to get geodesic line
-                                    def get_geodesic_line(lat1, lon1, lat2, lon2, n_points=30):
-                                        lons, lats = geod.npts(lon1, lat1, lon2, lat2, n_points)
-                                        # Add start and end points
-                                        lats = [lat1] + lats + [lat2]
-                                        lons = [lon1] + lons + [lon2]
-                                        return list(zip(lats, lons))
-
-                                    # Add markers and curved lines for each leg
-                                    for _, leg in selected_shipment.iterrows():
-                                        origin = (leg['Origin Latitude'], leg['Origin Longitude'])
-                                        destination = (leg['Destination Latitude'], leg['Destination Longitude'])
-                                        mode = leg['Mode']
-                                        # Set color based on mode
-                                        if mode == 'SEA':
-                                            color = 'darkblue'
-                                        else:  # ROAD
-                                            color = 'saddlebrown'
-                                        # Generate geodesic line
-                                        line = get_geodesic_line(origin[0], origin[1], destination[0], destination[1])
-                                        # Add line
-                                        folium.PolyLine(
-                                            line,
-                                            color=color,
-                                            weight=5,
-                                            opacity=0.8,
-                                            tooltip=f"{mode} leg from {leg['Origin']} to {leg['Destination']}"
-                                        ).add_to(shipment_map)
-                                        # Add markers
-                                        folium.Marker(
-                                            location=origin,
-                                            popup=leg['Origin'],
-                                            icon=folium.Icon(color='green' if mode == 'ROAD' else 'blue')
-                                        ).add_to(shipment_map)
-                                        folium.Marker(
-                                            location=destination,
-                                            popup=leg['Destination'],
-                                            icon=folium.Icon(color='green' if mode == 'ROAD' else 'blue')
-                                        ).add_to(shipment_map)
-                                    # Display the map
-                                    st_folium(shipment_map, width=700, height=450)
-
-                                    # Option to save the map
-                                    map_html = shipment_map.get_root().render()
-                                    st.download_button(
-                                        label="Download Map as HTML",
-                                        data=map_html,
-                                        file_name=f'shipment_{selected_id}_map.html',
-                                        mime='text/html'
+                                def select_nearest_port(location_coords):
+                                    # Calculate distance from location to each port
+                                    ports_df['Distance'] = ports_df.apply(
+                                        lambda row: geodesic(location_coords, (row['Latitude'], row['Longitude'])).km,
+                                        axis=1
                                     )
-                            else:
-                                st.warning("No shipments were processed. Please adjust the search radius or check your shipment data.")
+                                    # Filter ports within the radius
+                                    nearby_ports = ports_df[ports_df['Distance'] <= radius_km].copy()
+                                    if nearby_ports.empty:
+                                        return None
+                                    # Select the port with the minimum distance
+                                    nearest_port = nearby_ports.loc[nearby_ports['Distance'].idxmin()]
+                                    return nearest_port
+
+                                for _, shipment in shipments_df.iterrows():
+                                    consignment_id = shipment['Consignment ID']
+                                    customer_name = shipment['Customer Name']
+                                    load_tons = shipment['Load (Tons)']
+                                    vehicle_type = shipment['Vehicle Type']
+                                    date = shipment['Date']
+
+                                    # Origin and destination coordinates
+                                    origin_coords = (shipment['Origin Latitude'], shipment['Origin Longitude'])
+                                    destination_coords = (shipment['Destination Latitude'], shipment['Destination Longitude'])
+
+                                    # Select nearest ports near origin and destination
+                                    origin_port = select_nearest_port(origin_coords)
+                                    destination_port = select_nearest_port(destination_coords)
+
+                                    if origin_port is None or destination_port is None:
+                                        st.warning(f"No suitable ports found within {radius_km} km for shipment {consignment_id}. Skipping.")
+                                        continue
+
+                                    # Create legs
+                                    legs = [
+                                        {
+                                            'ID': consignment_id,
+                                            'Sequence': 1,
+                                            'Origin': shipment['Origin'],
+                                            'Destination': origin_port['Port Name'],
+                                            'Origin Latitude': shipment['Origin Latitude'],
+                                            'Origin Longitude': shipment['Origin Longitude'],
+                                            'Destination Latitude': origin_port['Latitude'],
+                                            'Destination Longitude': origin_port['Longitude'],
+                                            'Load (Tons)': load_tons,
+                                            'Mode': 'ROAD',
+                                            'Vehicle Type': vehicle_type,
+                                            'Customer Name': customer_name,
+                                            'Date': date
+                                        },
+                                        {
+                                            'ID': consignment_id,
+                                            'Sequence': 2,
+                                            'Origin': origin_port['Port Name'],
+                                            'Destination': destination_port['Port Name'],
+                                            'Origin Latitude': origin_port['Latitude'],
+                                            'Origin Longitude': origin_port['Longitude'],
+                                            'Destination Latitude': destination_port['Latitude'],
+                                            'Destination Longitude': destination_port['Longitude'],
+                                            'Load (Tons)': load_tons,
+                                            'Mode': 'SEA',
+                                            'Vehicle Type': None,
+                                            'Customer Name': customer_name,
+                                            'Date': date
+                                        },
+                                        {
+                                            'ID': consignment_id,
+                                            'Sequence': 3,
+                                            'Origin': destination_port['Port Name'],
+                                            'Destination': shipment['Destination'],
+                                            'Origin Latitude': destination_port['Latitude'],
+                                            'Origin Longitude': destination_port['Longitude'],
+                                            'Destination Latitude': shipment['Destination Latitude'],
+                                            'Destination Longitude': shipment['Destination Longitude'],
+                                            'Load (Tons)': load_tons,
+                                            'Mode': 'ROAD',
+                                            'Vehicle Type': vehicle_type,
+                                            'Customer Name': customer_name,
+                                            'Date': date
+                                        }
+                                    ]
+                                    enriched_shipments.extend(legs)
+
+                                if enriched_shipments:
+                                    enriched_shipments_df = pd.DataFrame(enriched_shipments)
+                                    st.session_state['enriched_shipments_df'] = enriched_shipments_df
+                                else:
+                                    st.warning("No shipments were processed. Please adjust the search radius or check your shipment data.")
+
+                        # Display the enriched data
+                        if st.session_state['enriched_shipments_df'] is not None:
+                            enriched_shipments_df = st.session_state['enriched_shipments_df']
+                            st.success("Shipments processed successfully!")
+                            st.subheader("Enriched Shipment Data")
+                            st.dataframe(enriched_shipments_df)
+
+                            # Download button
+                            def convert_df(df):
+                                output = BytesIO()
+                                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                                    df.to_excel(writer, index=False, sheet_name='Enriched Shipments')
+                                processed_data = output.getvalue()
+                                return processed_data
+
+                            excel_data = convert_df(enriched_shipments_df)
+                            st.download_button(
+                                label="Download Enriched Data as Excel",
+                                data=excel_data,
+                                file_name='enriched_shipments.xlsx',
+                                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                            )
+
+                            # Visualization Section
+                            st.subheader("Visualize Shipment Route")
+                            shipment_ids = enriched_shipments_df['ID'].unique()
+                            selected_id = st.selectbox("Select a Shipment ID to visualize:", shipment_ids)
+                            if selected_id:
+                                selected_shipment = enriched_shipments_df[enriched_shipments_df['ID'] == selected_id]
+                                # Create a map centered at the average location of the shipment legs
+                                avg_lat = selected_shipment[['Origin Latitude', 'Destination Latitude']].mean().mean()
+                                avg_lon = selected_shipment[['Origin Longitude', 'Destination Longitude']].mean().mean()
+                                shipment_map = folium.Map(location=[avg_lat, avg_lon], zoom_start=4)
+                                geod = Geod(ellps="WGS84")  # Initialize Geod
+
+                                # Function to get geodesic line
+                                def get_geodesic_line(lat1, lon1, lat2, lon2, n_points=30):
+                                    points = geod.npts(lon1, lat1, lon2, lat2, n_points)
+                                    line = [(lat1, lon1)] + [(lat, lon) for lon, lat in points] + [(lat2, lon2)]
+                                    return line
+
+                                # Add markers and curved lines for each leg
+                                for _, leg in selected_shipment.iterrows():
+                                    origin = (leg['Origin Latitude'], leg['Origin Longitude'])
+                                    destination = (leg['Destination Latitude'], leg['Destination Longitude'])
+                                    mode = leg['Mode']
+                                    # Set color based on mode
+                                    if mode == 'SEA':
+                                        color = 'darkblue'
+                                    else:  # ROAD
+                                        color = 'saddlebrown'
+                                    # Generate geodesic line
+                                    line = get_geodesic_line(origin[0], origin[1], destination[0], destination[1])
+                                    # Add line
+                                    folium.PolyLine(
+                                        line,
+                                        color=color,
+                                        weight=5,
+                                        opacity=0.8,
+                                        tooltip=f"{mode} leg from {leg['Origin']} to {leg['Destination']}"
+                                    ).add_to(shipment_map)
+                                    # Add markers
+                                    folium.Marker(
+                                        location=origin,
+                                        popup=leg['Origin'],
+                                        icon=folium.Icon(color='green' if mode == 'ROAD' else 'blue')
+                                    ).add_to(shipment_map)
+                                    folium.Marker(
+                                        location=destination,
+                                        popup=leg['Destination'],
+                                        icon=folium.Icon(color='green' if mode == 'ROAD' else 'blue')
+                                    ).add_to(shipment_map)
+                                # Display the map
+                                st_folium(shipment_map, width=700, height=450)
+
+                                # Option to save the map
+                                map_html = shipment_map.get_root().render()
+                                st.download_button(
+                                    label="Download Map as HTML",
+                                    data=map_html,
+                                    file_name=f'shipment_{selected_id}_map.html',
+                                    mime='text/html'
+                                )
+                    else:
+                        st.info("Click the 'Process Shipments' button to process your shipment data.")
         except Exception as e:
             st.error(f"An error occurred while processing the shipment file: {e}")
     else:
