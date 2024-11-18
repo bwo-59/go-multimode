@@ -3,8 +3,8 @@ from geopy.distance import geodesic
 import streamlit as st
 from io import BytesIO
 import folium
+from folium import plugins
 from streamlit_folium import st_folium
-from folium.features import CustomIcon
 
 # Set page configuration
 st.set_page_config(
@@ -211,9 +211,8 @@ if ports_df is not None:
                                 # Download button
                                 def convert_df(df):
                                     output = BytesIO()
-                                    writer = pd.ExcelWriter(output, engine='openpyxl')
-                                    df.to_excel(writer, index=False, sheet_name='Enriched Shipments')
-                                    writer.save()
+                                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                                        df.to_excel(writer, index=False, sheet_name='Enriched Shipments')
                                     processed_data = output.getvalue()
                                     return processed_data
 
@@ -235,7 +234,7 @@ if ports_df is not None:
                                     avg_lat = selected_shipment[['Origin Latitude', 'Destination Latitude']].mean().mean()
                                     avg_lon = selected_shipment[['Origin Longitude', 'Destination Longitude']].mean().mean()
                                     shipment_map = folium.Map(location=[avg_lat, avg_lon], zoom_start=4)
-                                    # Add markers and lines for each leg
+                                    # Add markers and curved lines for each leg
                                     for _, leg in selected_shipment.iterrows():
                                         origin = (leg['Origin Latitude'], leg['Origin Longitude'])
                                         destination = (leg['Destination Latitude'], leg['Destination Longitude'])
@@ -245,8 +244,8 @@ if ports_df is not None:
                                             color = 'darkblue'
                                         else:  # ROAD
                                             color = 'saddlebrown'
-                                        # Add line (arrow)
-                                        folium.PolyLine(
+                                        # Add curved line
+                                        plugins.CurvedLine(
                                             locations=[origin, destination],
                                             color=color,
                                             weight=5,
@@ -268,7 +267,7 @@ if ports_df is not None:
                                     st_folium(shipment_map, width=700, height=450)
 
                                     # Option to save the map
-                                    map_html = shipment_map._repr_html_()
+                                    map_html = shipment_map.get_root().render()
                                     st.download_button(
                                         label="Download Map as HTML",
                                         data=map_html,
