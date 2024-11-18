@@ -2,6 +2,7 @@ import pandas as pd
 from geopy.distance import geodesic
 import streamlit as st
 from io import BytesIO
+import pydeck as pdk
 
 # Set page configuration
 st.set_page_config(
@@ -15,6 +16,48 @@ st.set_page_config(
 st.title("Shipment Leg Enrichment Application")
 st.write("Upload your shipment data to enrich it with detailed journey legs.")
 
+# Read port data from 'ports.csv' in the project files
+try:
+    ports_df = pd.read_csv('ports.csv')
+except FileNotFoundError:
+    st.error("The 'ports.csv' file was not found in the project directory.")
+    st.stop()
+
+# Display 10 random ports on a map
+st.header("Port Locations")
+random_ports_df = ports_df.sample(n=10)
+
+# Prepare data for mapping
+port_locations = random_ports_df[['Latitude', 'Longitude', 'Port Name']]
+
+# Create a Pydeck map
+map_layer = pdk.Deck(
+    map_style='mapbox://styles/mapbox/light-v9',
+    initial_view_state=pdk.ViewState(
+        latitude=port_locations['Latitude'].mean(),
+        longitude=port_locations['Longitude'].mean(),
+        zoom=1,
+        pitch=0,
+    ),
+    layers=[
+        pdk.Layer(
+            'ScatterplotLayer',
+            data=port_locations,
+            get_position='[Longitude, Latitude]',
+            get_fill_color='[200, 30, 0, 160]',
+            get_radius=50000,
+            pickable=True,
+            auto_highlight=True,
+        )
+    ],
+    tooltip={
+        'html': '<b>Port Name:</b> {Port Name}',
+        'style': {'color': 'white'}
+    }
+)
+
+st.pydeck_chart(map_layer)
+
 # Shipment File Upload
 st.header("Upload Shipment Excel File")
 shipment_file = st.file_uploader(
@@ -23,12 +66,14 @@ shipment_file = st.file_uploader(
     key='shipment'
 )
 
-# Read port data from 'ports.csv' in the project files
-try:
-    ports_df = pd.read_csv('ports.csv')
-except FileNotFoundError:
-    st.error("The 'ports.csv' file was not found in the project directory.")
-    st.stop()
+# Input for radius
+st.header("Set Search Radius (in kilometers)")
+radius_km = st.number_input(
+    "Enter the search radius (default is 500 km):",
+    min_value=1,
+    value=500,
+    step=1
+)
 
 # Check if the shipment file is uploaded
 if shipment_file is not None:
@@ -46,7 +91,20 @@ if process_button:
             st.error(f"Error reading the shipment file: {e}")
             st.stop()
 
-        def select_nearest_port(location_coords, ports_df, radius_km=500):
+        # Check if all required columns are present
+        required_columns = [
+            'Consignment ID', 'Origin', 'Origin Latitude', 'Origin Longitude',
+            'Destination', 'Destination Latitude', 'Destination Longitude',
+            'Load (Tons)', 'Customer Name', 'Vehicle Type', 'Date'
+        ]
+
+        missing_columns = [col for col in required_columns if col not in shipments_df.columns]
+
+        if missing_columns:
+            st.error(f"The following required columns are missing from the shipment data: {', '.join(missing_columns)}")
+            st.stop()
+
+        def select_nearest_port(location_coords, ports_df, radius_km):
             # Calculate distance from location to each port
             ports_df['Distance'] = ports_df.apply(
                 lambda row: geodesic(location_coords, (row['Latitude'], row['Longitude'])).km,
@@ -76,10 +134,10 @@ if process_button:
             destination_coords = (shipment['Destination Latitude'], shipment['Destination Longitude'])
 
             # Select nearest ports near origin and destination
-            origin_port = select_nearest_port(origin_coords, ports_df)
-            destination_port = select_nearest_port(destination_coords, ports_df)
+            origin_port = select_nearest_port(origin_coords, ports_df, radius_km)
+            destination_port = select_nearest_port(destination_coords, ports_df, radius_km)
 
-            if not origin_port or not destination_port:
+            if origin_port is None or destination_port is None:
                 st.warning(f"No suitable ports found for shipment {consignment_id}. Skipping.")
                 continue  # Skip shipments without suitable ports
 
