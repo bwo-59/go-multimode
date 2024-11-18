@@ -4,6 +4,7 @@ import streamlit as st
 from io import BytesIO
 import folium
 from streamlit_folium import st_folium
+from folium.features import CustomIcon
 
 # Set page configuration
 st.set_page_config(
@@ -158,6 +159,10 @@ if ports_df is not None:
                                         'Sequence': 1,
                                         'Origin': shipment['Origin'],
                                         'Destination': origin_port['Port Name'],
+                                        'Origin Latitude': shipment['Origin Latitude'],
+                                        'Origin Longitude': shipment['Origin Longitude'],
+                                        'Destination Latitude': origin_port['Latitude'],
+                                        'Destination Longitude': origin_port['Longitude'],
                                         'Load (Tons)': load_tons,
                                         'Mode': 'ROAD',
                                         'Vehicle Type': vehicle_type,
@@ -169,6 +174,10 @@ if ports_df is not None:
                                         'Sequence': 2,
                                         'Origin': origin_port['Port Name'],
                                         'Destination': destination_port['Port Name'],
+                                        'Origin Latitude': origin_port['Latitude'],
+                                        'Origin Longitude': origin_port['Longitude'],
+                                        'Destination Latitude': destination_port['Latitude'],
+                                        'Destination Longitude': destination_port['Longitude'],
                                         'Load (Tons)': load_tons,
                                         'Mode': 'SEA',
                                         'Vehicle Type': None,
@@ -180,6 +189,10 @@ if ports_df is not None:
                                         'Sequence': 3,
                                         'Origin': destination_port['Port Name'],
                                         'Destination': shipment['Destination'],
+                                        'Origin Latitude': destination_port['Latitude'],
+                                        'Origin Longitude': destination_port['Longitude'],
+                                        'Destination Latitude': shipment['Destination Latitude'],
+                                        'Destination Longitude': shipment['Destination Longitude'],
                                         'Load (Tons)': load_tons,
                                         'Mode': 'ROAD',
                                         'Vehicle Type': vehicle_type,
@@ -211,6 +224,57 @@ if ports_df is not None:
                                     file_name='enriched_shipments.xlsx',
                                     mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
                                 )
+
+                                # Visualization Section
+                                st.subheader("Visualize Shipment Route")
+                                shipment_ids = enriched_shipments_df['ID'].unique()
+                                selected_id = st.selectbox("Select a Shipment ID to visualize:", shipment_ids)
+                                if selected_id:
+                                    selected_shipment = enriched_shipments_df[enriched_shipments_df['ID'] == selected_id]
+                                    # Create a map centered at the average location of the shipment legs
+                                    avg_lat = selected_shipment[['Origin Latitude', 'Destination Latitude']].mean().mean()
+                                    avg_lon = selected_shipment[['Origin Longitude', 'Destination Longitude']].mean().mean()
+                                    shipment_map = folium.Map(location=[avg_lat, avg_lon], zoom_start=4)
+                                    # Add markers and lines for each leg
+                                    for _, leg in selected_shipment.iterrows():
+                                        origin = (leg['Origin Latitude'], leg['Origin Longitude'])
+                                        destination = (leg['Destination Latitude'], leg['Destination Longitude'])
+                                        mode = leg['Mode']
+                                        # Set color based on mode
+                                        if mode == 'SEA':
+                                            color = 'darkblue'
+                                        else:  # ROAD
+                                            color = 'saddlebrown'
+                                        # Add line (arrow)
+                                        folium.PolyLine(
+                                            locations=[origin, destination],
+                                            color=color,
+                                            weight=5,
+                                            opacity=0.8,
+                                            tooltip=f"{mode} leg from {leg['Origin']} to {leg['Destination']}"
+                                        ).add_to(shipment_map)
+                                        # Add markers
+                                        folium.Marker(
+                                            location=origin,
+                                            popup=leg['Origin'],
+                                            icon=folium.Icon(color='green' if mode == 'ROAD' else 'blue')
+                                        ).add_to(shipment_map)
+                                        folium.Marker(
+                                            location=destination,
+                                            popup=leg['Destination'],
+                                            icon=folium.Icon(color='green' if mode == 'ROAD' else 'blue')
+                                        ).add_to(shipment_map)
+                                    # Display the map
+                                    st_folium(shipment_map, width=700, height=450)
+
+                                    # Option to save the map
+                                    map_html = shipment_map._repr_html_()
+                                    st.download_button(
+                                        label="Download Map as HTML",
+                                        data=map_html,
+                                        file_name=f'shipment_{selected_id}_map.html',
+                                        mime='text/html'
+                                    )
                             else:
                                 st.warning("No shipments were processed. Please adjust the search radius or check your shipment data.")
         except Exception as e:
