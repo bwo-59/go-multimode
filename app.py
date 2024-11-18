@@ -20,6 +20,9 @@ st.write("Upload your shipment data to enrich it with detailed journey legs.")
 # Read port data from 'ports.csv' in the project files
 try:
     ports_df = pd.read_csv('ports.csv')
+    st.write("Port DataFrame Columns:", ports_df.columns.tolist())
+    st.write("First few rows of ports_df:")
+    st.dataframe(ports_df.head())
 except FileNotFoundError:
     st.error("The 'ports.csv' file was not found in the project directory.")
     st.stop()
