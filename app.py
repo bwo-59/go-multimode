@@ -1,7 +1,7 @@
 import pandas as pd
 from geopy.distance import geodesic
 import streamlit as st
-from io import BytesIO, StringIO
+from io import BytesIO
 
 # Set page configuration
 st.set_page_config(
@@ -23,16 +23,12 @@ shipment_file = st.file_uploader(
     key='shipment'
 )
 
-# Port data as a CSV string with simplified columns
-port_data_csv = """Port Code,Port Name,Latitude,Longitude
-NLRTM,Rotterdam,51.9475,4.1427
-CNSHG,Shanghai,31.2304,121.4737
-DEBRV,Bremerhaven,53.5396,8.5809
-USNYC,New York,40.7128,-74.0060
-"""
-
-# Read port data into a DataFrame
-ports_df = pd.read_csv(StringIO(port_data_csv))
+# Read port data from 'ports.csv' in the project files
+try:
+    ports_df = pd.read_csv('ports.csv')
+except FileNotFoundError:
+    st.error("The 'ports.csv' file was not found in the project directory.")
+    st.stop()
 
 # Check if the shipment file is uploaded
 if shipment_file is not None:
@@ -43,7 +39,12 @@ else:
 
 if process_button:
     with st.spinner('Processing your shipments...'):
-        shipments_df = pd.read_excel(shipment_file)
+        # Read shipment data
+        try:
+            shipments_df = pd.read_excel(shipment_file)
+        except Exception as e:
+            st.error(f"Error reading the shipment file: {e}")
+            st.stop()
 
         def select_nearest_port(location_coords, ports_df, radius_km=500):
             # Calculate distance from location to each port
