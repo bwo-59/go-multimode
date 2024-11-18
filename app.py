@@ -65,26 +65,28 @@ def load_ports_data():
 ports_df = load_ports_data()
 
 if ports_df is not None:
-    # Display 10 random ports on a map using Folium
+    # Cache the map creation to prevent reloading
+    @st.cache_resource
+    def create_port_map(ports_df):
+        # Display 10 random ports on a map using Folium
+        random_ports_df = ports_df.sample(n=min(10, len(ports_df)))
+        # Create a Folium map centered on the average coordinates of the ports
+        average_lat = random_ports_df['Latitude'].mean()
+        average_lon = random_ports_df['Longitude'].mean()
+        port_map = folium.Map(location=[average_lat, average_lon], zoom_start=2)
+        # Add port markers to the map
+        for _, row in random_ports_df.iterrows():
+            folium.Marker(
+                location=[row['Latitude'], row['Longitude']],
+                popup=f"{row['Port Name']} ({row['Port Code']})",
+                tooltip=row['Port Name'],
+                icon=folium.Icon(color='blue', icon='ship', prefix='fa')
+            ).add_to(port_map)
+        return port_map
+
     st.header("Port Locations")
-    random_ports_df = ports_df.sample(n=min(10, len(ports_df)))
-
-    # Create a Folium map centered on the average coordinates of the ports
-    average_lat = random_ports_df['Latitude'].mean()
-    average_lon = random_ports_df['Longitude'].mean()
-
-    port_map = folium.Map(location=[average_lat, average_lon], zoom_start=2)
-
-    # Add port markers to the map
-    for _, row in random_ports_df.iterrows():
-        folium.Marker(
-            location=[row['Latitude'], row['Longitude']],
-            popup=f"{row['Port Name']} ({row['Port Code']})",
-            tooltip=row['Port Name'],
-            icon=folium.Icon(color='blue', icon='ship', prefix='fa')
-        ).add_to(port_map)
-
-    # Display the map in Streamlit
+    # Use the cached map
+    port_map = create_port_map(ports_df)
     st_folium(port_map, width=700, height=450)
 
     # Process the shipment file if uploaded
@@ -195,7 +197,12 @@ if ports_df is not None:
 
                                 # Download button
                                 def convert_df(df):
-                                    return df.to_excel(index=False, engine='openpyxl')
+                                    output = BytesIO()
+                                    writer = pd.ExcelWriter(output, engine='openpyxl')
+                                    df.to_excel(writer, index=False, sheet_name='Enriched Shipments')
+                                    writer.save()
+                                    processed_data = output.getvalue()
+                                    return processed_data
 
                                 excel_data = convert_df(enriched_shipments_df)
                                 st.download_button(
@@ -212,4 +219,3 @@ if ports_df is not None:
         st.info("Please upload a shipment Excel file to proceed.")
 else:
     st.error("Port data could not be loaded. Please ensure 'ports.csv' is present in the project directory.")
-
